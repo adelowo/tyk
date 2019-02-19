@@ -1,7 +1,7 @@
 // Tyk Gateway API
 //
 // The code below describes the Tyk Gateway API
-// Version: 1.7.0
+// Version: 2.8.0
 //
 //     Schemes: http, https
 //     Host: localhost
@@ -53,8 +53,9 @@ import (
 
 // apiModifyKeySuccess represents when a Key modification was successful
 //
-// swagger:response
+// swagger:response apiModifyKeySuccess
 type apiModifyKeySuccess struct {
+	// in:body
 	Key     string `json:"key"`
 	Status  string `json:"status"`
 	Action  string `json:"action"`
@@ -63,9 +64,8 @@ type apiModifyKeySuccess struct {
 
 // apiStatusMessage represents an API status message
 //
-// swagger:response
+// swagger:response apiStatusMessage
 type apiStatusMessage struct {
-	// Status can be either `ok` or `error`
 	Status string `json:"status"`
 	// Response details
 	Message string `json:"message"`
@@ -742,17 +742,10 @@ func handleDeleteAPI(apiID string) (interface{}, int) {
 //     description: API created
 //     schema:
 //       "$ref": "#/responses/apiModifyKeySuccess"
-//     examples:
-//       status: "ok"
-//       action: "created"
-//       key: "{...API JSON definition...}"
 //   400:
 //     description: Malformed data
 //     schema:
 //       "$ref": "#/responses/apiStatusMessage"
-//     examples:
-//       status: "error"
-//       message: "Malformed API data"
 
 // swagger:operation GET /apis/{apiID} APIs getApi
 //
@@ -789,16 +782,10 @@ func handleDeleteAPI(apiID string) (interface{}, int) {
 //     description: API deleted
 //     schema:
 //       $ref: "#/responses/apiStatusMessage"
-//     examples:
-//       status: "ok"
-//       message: "API deleted"
 //   400:
 //     description: No API ID specified
 //     schema:
 //         $ref: "#/responses/apiStatusMessage"
-//     examples:
-//         status: "error"
-//         message: "API ID not specified"
 func apiHandler(w http.ResponseWriter, r *http.Request) {
 	apiID := mux.Vars(r)["apiID"]
 
@@ -838,7 +825,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 
 // swagger:operation GET /keys Keys listKeys
 //
-// List All Keys
+// List all keys
 //
 //---
 // responses:
@@ -851,25 +838,18 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 
 // swagger:operation POST /keys Keys createKey
 //
-// Create a new Key
+// Create a new key
 //
 //---
 // responses:
 //   200:
 //     description: New Key created
 //     schema:
-//       $ref: "#/responses/apiModifyKeySuccess"
-//     examples:
-//       status: "ok"
-//       action: "created"
-//       key: "{...KEY JSON definition...}"
+//       "$ref": "#/responses/apiModifyKeySuccess"
 //   400:
 //     description: Malformed data
 //     schema:
-//       $ref: "#/responses/apiStatusMessage"
-//     examples:
-//       status: "error"
-//       message: "Malformed Key data"
+//       "$ref": "#/responses/apiStatusMessage"
 
 // swagger:operation POST /keys Keys addKey
 //
@@ -880,18 +860,11 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 //   200:
 //     description: New Key added
 //     schema:
-//       $ref: "#/responses/apiModifyKeySuccess"
-//     examples:
-//       status: "ok"
-//       action: "created"
-//       key: "{...KEY JSON definition...}"
+//       "$ref": "#/responses/apiModifyKeySuccess"
 //   400:
 //     description: Malformed data
 //     schema:
-//       $ref: "#/responses/apiStatusMessage"
-//     examples:
-//       status: "error"
-//       message: "Malformed Key data"
+//       "$ref": "#/responses/apiStatusMessage"
 
 // swagger:operation PUT /keys/{keyID} Keys updateKey
 //
@@ -909,20 +882,14 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 //     description: Key updated
 //     schema:
 //       "$ref": "#/responses/apiModifyKeySuccess"
-//     examples:
-//       status: "ok"
-//       action: "updated"
 //   400:
 //     description: No or incorrect Key ID specified
 //     schema:
-//       $ref: "#/responses/apiStatusMessage"
-//     examples:
-//       status: "error"
-//       message: "Key ID not specified"
+//       "$ref": "#/responses/apiStatusMessage"
 
 // swagger:operation GET /keys/{keyID} Keys getKey
 //
-// Get a Key
+// Get a key
 //
 //---
 // parameters:
@@ -939,7 +906,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 
 // swagger:operation DELETE /keys/{keyID} Keys deleteKey
 //
-// Delete Key
+// Delete a key
 //
 //---
 // parameters:
@@ -953,16 +920,10 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 //     description: Key deleted
 //     schema:
 //       $ref: "#/responses/apiStatusMessage"
-//     examples:
-//       status: "ok"
-//       message: "Key deleted"
 //   400:
 //     description: No Key ID specified
 //     schema:
 //         $ref: "#/responses/apiStatusMessage"
-//     examples:
-//         status: "error"
-//         message: "Key ID not specified"
 func keyHandler(w http.ResponseWriter, r *http.Request) {
 	keyName := mux.Vars(r)["keyName"]
 	apiID := r.URL.Query().Get("api_id")
@@ -1275,12 +1236,14 @@ func handleDeleteOrgKey(orgID string) (interface{}, int) {
 	return statusObj, http.StatusOK
 }
 
-// swagger:route GET /reload/group Reload reloadGroup
-//
-// Reloads all the Tyk Gateways in a cluster
-//
-//     Responses:
-//       200: apiStatusMessage
+// swagger:operation GET /reload/group Reload reloadGroup
+// ---
+//  summary: Reloads all the Tyk Gateways in a cluster
+//  responses:
+//    "200":
+//      description: All gateways in a cluster were successfully refreshed
+//	schema:
+//        "$ref": "#/responses/apiStatusMessage"
 func groupResetHandler(w http.ResponseWriter, r *http.Request) {
 	log.WithFields(logrus.Fields{
 		"prefix": "api",
@@ -1463,7 +1426,7 @@ func createKeyHandler(w http.ResponseWriter, r *http.Request) {
 
 // NewClientRequest is an outward facing JSON object translated from osin OAuthClients
 //
-// swagger:model
+// swagger:model NewClientRequest
 type NewClientRequest struct {
 	ClientID          string      `json:"client_id"`
 	ClientRedirectURI string      `json:"redirect_uri"`
@@ -1483,20 +1446,17 @@ func oauthClientStorageID(clientID string) string {
 // Create an OAuth client
 //
 //---
-// requestBody:
-//   content:
-//     application/json:
-//       schema:
-//         $ref: "#/definitions/NewClientRequest"
-//       examples:
-//         client_id: test
-//         api_id: id
-//         policy_id: policy
+// parameters:
+//   - in: body
+//     name: client_info
+//     required: true
+//     schema:
+//       "$ref": "#/definitions/NewClientRequest"
 // responses:
 //   200:
 //     description: Client created
 //     schema:
-//       $ref: "#/definitions/NewClientRequest"
+//       "$ref": "#/definitions/NewClientRequest"
 func createOauthClient(w http.ResponseWriter, r *http.Request) {
 	var newOauthClient NewClientRequest
 	if err := json.NewDecoder(r.Body).Decode(&newOauthClient); err != nil {
@@ -1713,34 +1673,25 @@ func updateOauthClient(keyName, apiID string, r *http.Request) (interface{}, int
 
 // swagger:operation DELETE /oauth/refresh/{keyName} oauth invalidateOAuthRefresh
 //
-// Invalidate OAuth refresh token
+// Invalidate oAuth refresh token
 //
 //---
 // parameters:
-// - in: query
-//   name: api_id
-//   required: true
-//   type: string
-//   description: The API id
-// - in: path
-//   name: keyName
-//   required: true
-//   type: string
-//   description: Refresh token
-// requestBody:
-//   content:
-//     application/json:
-//       schema:
-//         "$ref": "#/definitions/NewClientRequest"
-//       examples:
-//         client_id: test
-//         api_id: id
-//         policy_id: policy
+//   - in: query
+//     name: api_id
+//     required: true
+//     type: string
+//     description: The API id
+//   - in: path
+//     name: keyName
+//     required: true
+//     type: string
+//     description: Refresh token
 // responses:
 //   200:
 //     description: Deleted
 //     schema:
-//       "$ref": "#/definitions/apiModifyKeySuccess"
+//       "$ref": "#/responses/apiModifyKeySuccess"
 func invalidateOauthRefresh(w http.ResponseWriter, r *http.Request) {
 	apiID := r.URL.Query().Get("api_id")
 	if apiID == "" {
@@ -1810,15 +1761,15 @@ func invalidateOauthRefresh(w http.ResponseWriter, r *http.Request) {
 
 // swagger:operation GET /oauth/clients/{apiID} OAuth listOAuthClients
 //
-// List OAuth clients
+// List oAuth clients
 //
 //---
 // parameters:
-// - in: path
-//   name: apiID
-//   required: true
-//   type: string
-//   description: The API ID
+//   - in: path
+//     name: apiID
+//     required: true
+//     type: string
+//     description: The API ID
 // responses:
 //   200:
 //     description: Get OAuth client details or a list of OAuth clients
@@ -1833,48 +1784,43 @@ func invalidateOauthRefresh(w http.ResponseWriter, r *http.Request) {
 //
 //---
 // parameters:
-// - in: path
-//   name: apiID
-//   required: true
-//   type: string
-//   minimum: 1
-//   description: The API ID
-// - in: path
-//   name: keyName
-//   required: true
-//   type: string
-//   description: The Client ID
+//   - in: path
+//     name: apiID
+//     required: true
+//     type: string
+//     description: API ID
+//   - in: path
+//     name: keyName
+//     required: true
+//     type: string
+//     description: The Client ID
 // responses:
 //   200:
 //     description: Get OAuth client details or a list of OAuth clients
 //     schema:
 //       "$ref": "#/definitions/NewClientRequest"
 
-// swagger:operation DELETE /oauth/clients/{apiID}/{keyName} OAuth deleteOAuthClient
+// swagger:operation DELETE /oauth/clients/{apiID}/{keyName} oauth deleteOAuthClient
 //
 // Delete oAuth client
 //
 //---
 // parameters:
-// - in: path
-//   name: apiID
-//   required: true
-//   type: string
-//   minimum: 1
-//   description: The API ID
-// - in: path
-//   name: keyName
-//   required: true
-//   type: string
-//   description: The Client ID
+//   - in: path
+//     name: apiID
+//     required: true
+//     type: string
+//     description: The API ID
+//   - in: path
+//     name: keyName
+//     required: true
+//     type: string
+//     description: The Client ID
 // responses:
 //   200:
 //     description: OAuth client deleted
 //     schema:
 //       "$ref": "#/responses/apiModifyKeySuccess"
-//     examples:
-//       status: "ok"
-//       action: "deleted"
 func oAuthClientHandler(w http.ResponseWriter, r *http.Request) {
 	apiID := mux.Vars(r)["apiID"]
 	keyName := mux.Vars(r)["keyName"]
@@ -1907,17 +1853,16 @@ func oAuthClientHandler(w http.ResponseWriter, r *http.Request) {
 //
 //---
 // parameters:
-// - in: path
-//   name: apiID
-//   required: true
-//   type: string
-//   minimum: 1
-//   description: The API ID
-// - in: path
-//   name: keyName
-//   required: true
-//   type: string    
-//   description: The Client ID
+//   - in: path
+//     name: apiID
+//     required: true
+//     type: string
+//     description: The API ID
+//   - in: path
+//     name: keyName
+//     required: true
+//     type: string
+//     description: The Client ID
 // responses:
 //   200:
 //     description: Get a list of tokens
@@ -2133,19 +2078,16 @@ func userRatesCheck(w http.ResponseWriter, r *http.Request) {
 //
 //---
 // parameters:
-// - in: path
-//   name: apiID
-//   required: true
-//   type: string
-//   description: The API ID
+//   - in: path
+//     name: apiID
+//     required: true
+//     type: string
+//     description: The API ID
 // responses:
 //   200:
 //     description: Invalidate cache
 //     schema:
-//       $ref: "#/responses/apiStatusMessage"
-//     examples:
-//       status: "ok"
-//       message: "cache invalidated"
+//       "$ref": "#/responses/apiStatusMessage"
 func invalidateCacheHandler(w http.ResponseWriter, r *http.Request) {
 	apiID := mux.Vars(r)["apiID"]
 
