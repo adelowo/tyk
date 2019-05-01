@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -143,7 +144,11 @@ func resetAPILimits(accessRights map[string]user.AccessDefinition) {
 }
 
 func doAddOrUpdate(keyName string, newSession *user.SessionState, dontReset bool, isHashed bool) error {
-	newSession.LastUpdated = strconv.Itoa(int(time.Now().Unix()))
+	// field last_updated plays an important role in in-mem rate limiter
+	// so update last_updated to current timestamp only if suppress_reset wasn't set to 1
+	if !dontReset {
+		newSession.LastUpdated = strconv.Itoa(int(time.Now().Unix()))
+	}
 
 	if len(newSession.AccessRights) > 0 {
 		// reset API-level limit to nil if any has a zero-value
@@ -244,35 +249,73 @@ func getKeyDetail(key, apiID string, hashed bool) (user.SessionState, bool) {
 }
 
 func handleAddOrUpdate(keyName string, r *http.Request, isHashed bool) (interface{}, int) {
-	var newSession user.SessionState
-	if err := json.NewDecoder(r.Body).Decode(&newSession); err != nil {
+	suppressReset := r.URL.Query().Get("suppress_reset") == "1"
+
+	// decode payload
+	newSession := user.SessionState{}
+
+	contents, _ := ioutil.ReadAll(r.Body)
+	r.Body = ioutil.NopCloser(bytes.NewReader(contents))
+
+	if err := json.Unmarshal(contents, &newSession); err != nil {
 		log.Error("Couldn't decode new session object: ", err)
 		return apiError("Request malformed"), http.StatusBadRequest
 	}
+
+	mw := BaseMiddleware{}
+	mw.ApplyPolicies(&newSession)
+
 	// DO ADD OR UPDATE
+
+	// get original session in case of update and preserve fields that SHOULD NOT be updated
+	originalKey := user.SessionState{}
+	if r.Method == http.MethodPut {
+		found := false
+		for apiID := range newSession.AccessRights {
+			originalKey, found = getKeyDetail(keyName, apiID, isHashed)
+			if found {
+				break
+			}
+		}
+		if !found {
+			log.Error("Could not find key when updating")
+			return apiError("Key is not found"), http.StatusNotFound
+		}
+
+		// don't change fields related to quota and rate limiting if was passed as "suppress_reset=1"
+		if suppressReset {
+			// save existing quota_renews and last_updated if suppress_reset was passed
+			// (which means don't reset quota or rate counters)
+			// - leaving quota_renews as 0 will force quota limiter to start new renewal period
+			// - setting new last_updated with force rate limiter to start new "per" rating period
+
+			// on session level
+			newSession.QuotaRenews = originalKey.QuotaRenews
+			newSession.LastUpdated = originalKey.LastUpdated
+
+			// on ACL API limit level
+			for apiID, access := range originalKey.AccessRights {
+				if access.Limit == nil {
+					continue
+				}
+				if newAccess, ok := newSession.AccessRights[apiID]; ok && newAccess.Limit != nil {
+					newAccess.Limit.QuotaRenews = access.Limit.QuotaRenews
+					newSession.AccessRights[apiID] = newAccess
+				}
+			}
+		}
+	}
+
 	// Update our session object (create it)
 	if newSession.BasicAuthData.Password != "" {
 		// If we are using a basic auth user, then we need to make the keyname explicit against the OrgId in order to differentiate it
 		// Only if it's NEW
 		switch r.Method {
-		case "POST":
+		case http.MethodPost:
 			keyName = generateToken(newSession.OrgID, keyName)
 			// It's a create, so lets hash the password
 			setSessionPassword(&newSession)
-		case "PUT":
-			// Ge the session
-			var originalKey user.SessionState
-			var found bool
-			for apiID := range newSession.AccessRights {
-				originalKey, found = getKeyDetail(keyName, apiID, false)
-				if found {
-					break
-				}
-			}
-
-			if !found {
-				break
-			}
+		case http.MethodPut:
 			if originalKey.BasicAuthData.Password != newSession.BasicAuthData.Password {
 				// passwords dont match assume it's new, lets hash it
 				log.Debug("Passwords dont match, original: ", originalKey.BasicAuthData.Password)
@@ -283,15 +326,13 @@ func handleAddOrUpdate(keyName string, r *http.Request, isHashed bool) (interfac
 		}
 	}
 
-	suppressReset := r.URL.Query().Get("suppress_reset") == "1"
-
 	if err := doAddOrUpdate(keyName, &newSession, suppressReset, isHashed); err != nil {
 		return apiError("Failed to create key, ensure security settings are correct."), http.StatusInternalServerError
 	}
 
 	action := "modified"
 	event := EventTokenUpdated
-	if r.Method == "POST" {
+	if r.Method == http.MethodPost {
 		action = "added"
 		event = EventTokenCreated
 	}
@@ -374,6 +415,7 @@ func handleGetDetail(sessionKey, apiID string, byHash bool) (interface{}, int) {
 		if usedQuota, err := sessionManager.Store().GetRawKey(limQuotaKey); err == nil {
 			qInt, _ := strconv.Atoi(usedQuota)
 			remaining := access.Limit.QuotaMax - int64(qInt)
+
 			if remaining < 0 {
 				access.Limit.QuotaRemaining = 0
 			} else {
@@ -381,6 +423,9 @@ func handleGetDetail(sessionKey, apiID string, byHash bool) (interface{}, int) {
 			}
 			session.AccessRights[id] = access
 		} else {
+			access.Limit.QuotaRemaining = access.Limit.QuotaMax
+			session.AccessRights[id] = access
+
 			log.WithFields(logrus.Fields{
 				"prefix": "api",
 				"apiID":  id,
@@ -1834,9 +1879,6 @@ func ctxGetVersionInfo(r *http.Request) *apidef.VersionInfo {
 }
 
 func ctxSetVersionInfo(r *http.Request, v *apidef.VersionInfo) {
-	if v == nil {
-		panic("setting a nil context VersionData")
-	}
 	setCtxValue(r, VersionData, v)
 }
 

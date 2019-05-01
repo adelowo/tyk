@@ -88,12 +88,60 @@ func TestLooping(t *testing.T) {
 		}...)
 	})
 
+	t.Run("Test multiple url rewrites", func(t *testing.T) {
+		buildAndLoadAPI(func(spec *APISpec) {
+			version := spec.VersionData.Versions["v1"]
+			json.Unmarshal([]byte(`{
+                "use_extended_paths": true,
+                "extended_paths": {
+			"internal": [{
+                        	"path": "/hidden_path",
+                        	"method": "GET"
+                    	}],
+			"url_rewrites": [{
+                        	"path": "/test",
+                        	"match_pattern": "/test",
+                        	"method": "GET",
+				"rewrite_to":"tyk://self/hidden_path_1"
+                    	},{
+                        	"path": "/hidden_path_1",
+                        	"match_pattern": "/hidden_path_1",
+                        	"method": "GET",
+				"rewrite_to":"tyk://self/hidden_path_2"
+                    	},{
+                        	"path": "/hidden_path_2",
+                        	"match_pattern": "/hidden_path_2",
+                        	"method": "GET",
+				"rewrite_to":"/upstream"
+		    	}]
+                }
+            }`), &version)
+
+			spec.VersionData.Versions["v1"] = version
+			spec.Proxy.ListenPath = "/"
+		})
+
+		//addHeaders := map[string]string{"X-Test": "test", "X-Internal": "test"}
+
+		ts.Run(t, []test.TestCase{
+			{Method: "GET", Path: "/test", BodyMatch: `"Url":"/upstream"`},
+		}...)
+	})
+
 	t.Run("Loop to another API", func(t *testing.T) {
 		buildAndLoadAPI(func(spec *APISpec) {
 			spec.APIID = "testid"
 			spec.Name = "hidden api"
 			spec.Proxy.ListenPath = "/somesecret"
 			spec.Internal = true
+			version := spec.VersionData.Versions["v1"]
+			json.Unmarshal([]byte(`{
+                "use_extended_paths": true,
+                "global_headers": {
+                    "X-Name":"internal"
+                }
+            }`), &version)
+			spec.VersionData.Versions["v1"] = version
 		}, func(spec *APISpec) {
 			spec.Proxy.ListenPath = "/test"
 
@@ -125,8 +173,8 @@ func TestLooping(t *testing.T) {
 
 		ts.Run(t, []test.TestCase{
 			{Path: "/somesecret", Code: 404},
-			{Path: "/test/by_name", Code: 200},
-			{Path: "/test/by_id", Code: 200},
+			{Path: "/test/by_name", Code: 200, BodyMatch: `"X-Name":"internal"`},
+			{Path: "/test/by_id", Code: 200, BodyMatch: `"X-Name":"internal"`},
 			{Path: "/test/wrong", Code: 500},
 		}...)
 	})

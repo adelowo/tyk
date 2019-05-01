@@ -44,6 +44,7 @@ type StorageOptionsConf struct {
 	Database              int               `json:"database"`
 	MaxIdle               int               `json:"optimisation_max_idle"`
 	MaxActive             int               `json:"optimisation_max_active"`
+	Timeout               int               `json:"timeout"`
 	EnableCluster         bool              `json:"enable_cluster"`
 	UseSSL                bool              `json:"use_ssl"`
 	SSLInsecureSkipVerify bool              `json:"ssl_insecure_skip_verify"`
@@ -286,6 +287,7 @@ type Config struct {
 	ProxyDefaultTimeout               int                                   `json:"proxy_default_timeout"`
 	ProxySSLDisableRenegotiation      bool                                  `json:"proxy_ssl_disable_renegotiation"`
 	LogLevel                          string                                `json:"log_level"`
+	HTTPProfile                       bool                                  `json:"enable_http_profiler"`
 	Security                          SecurityConfig                        `json:"security"`
 	EnableKeyLogging                  bool                                  `json:"enable_key_logging"`
 	NewRelic                          NewRelicConfig                        `json:"newrelic"`

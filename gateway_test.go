@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -92,7 +94,7 @@ func TestMain(m *testing.M) {
 	if err := config.WriteDefault("", &globalConf); err != nil {
 		panic(err)
 	}
-	globalConf.Storage.Database = 1
+	globalConf.Storage.Database = rand.Intn(15)
 	var err error
 	globalConf.AppPath, err = ioutil.TempDir("", "tyk-test-")
 	if err != nil {
@@ -871,6 +873,31 @@ func TestListenPathTykPrefix(t *testing.T) {
 	})
 }
 
+func TestReloadGoroutineLeakWithAsyncWrites(t *testing.T) {
+	ts := newTykTestServer()
+	defer ts.Close()
+
+	globalConf := config.Global()
+	globalConf.UseAsyncSessionWrite = true
+	config.SetGlobal(globalConf)
+	defer resetTestConfig()
+
+	buildAndLoadAPI(func(spec *APISpec) {
+		spec.Proxy.ListenPath = "/"
+	})
+
+	before := runtime.NumGoroutine()
+	doReload()
+
+	time.Sleep(100 * time.Millisecond)
+
+	after := runtime.NumGoroutine()
+
+	if after-before > 10 {
+		t.Errorf("Goroutine leak, was: %d, after reload: %d", before, after)
+	}
+}
+
 func TestProxyUserAgent(t *testing.T) {
 	ts := newTykTestServer()
 	defer ts.Close()
@@ -1420,11 +1447,13 @@ func TestRateLimitForAPIAndRateLimitAndQuotaCheck(t *testing.T) {
 		s.Rate = 1
 		s.Per = 60
 	})
+	defer FallbackKeySesionManager.RemoveSession(sess1token, false)
 
 	sess2token := createSession(func(s *user.SessionState) {
 		s.Rate = 1
 		s.Per = 60
 	})
+	defer FallbackKeySesionManager.RemoveSession(sess2token, false)
 
 	ts.Run(t, []test.TestCase{
 		{Headers: map[string]string{"Authorization": sess1token}, Code: http.StatusOK, Path: "/", Delay: 100 * time.Millisecond},

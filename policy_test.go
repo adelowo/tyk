@@ -449,7 +449,7 @@ func TestApplyPoliciesQuotaAPILimit(t *testing.T) {
 		ID:               "two_of_three_with_api_limit",
 		Per:              1,
 		Rate:             1000,
-		QuotaMax:         50,
+		QuotaMax:         5,
 		QuotaRenewalRate: 3600,
 		OrgID:            "default",
 		Partitions: user.PolicyPartitions{
@@ -614,16 +614,76 @@ func TestApplyPoliciesQuotaAPILimit(t *testing.T) {
 				api3LimitExpected := user.APILimit{
 					Rate:             1000,
 					Per:              1,
-					QuotaMax:         50,
+					QuotaMax:         5,
 					QuotaRenewalRate: 3600,
 					QuotaRenews:      api3Limit.QuotaRenews,
-					QuotaRemaining:   45,
+					QuotaRemaining:   0,
 					SetByPolicy:      true,
 				}
 				if !reflect.DeepEqual(*api3Limit, api3LimitExpected) {
 					t.Log("api3 limit received:", *api3Limit, "expected:", api3LimitExpected)
 					return false
 				}
+				return true
+			},
+		},
+	}...)
+
+	// Reset quota
+	ts.Run(t, []test.TestCase{
+		{
+			Method:    http.MethodPut,
+			Path:      "/tyk/keys/" + key + "?suppress_reset=1",
+			AdminAuth: true,
+			Code:      http.StatusOK,
+			Data:      session,
+		},
+		{
+			Method:    http.MethodGet,
+			Path:      "/tyk/keys/" + key,
+			AdminAuth: true,
+			Code:      http.StatusOK,
+			BodyMatchFunc: func(data []byte) bool {
+				sessionData := user.SessionState{}
+				if err := json.Unmarshal(data, &sessionData); err != nil {
+					t.Log(err.Error())
+					return false
+				}
+
+				api1Limit := sessionData.AccessRights["api3"].Limit
+				if api1Limit.QuotaRemaining != 0 {
+					t.Error("Should not reset quota")
+					return false
+				}
+
+				return true
+			},
+		},
+		{
+			Method:    http.MethodPut,
+			Path:      "/tyk/keys/" + key,
+			AdminAuth: true,
+			Code:      http.StatusOK,
+			Data:      session,
+		},
+		{
+			Method:    http.MethodGet,
+			Path:      "/tyk/keys/" + key,
+			AdminAuth: true,
+			Code:      http.StatusOK,
+			BodyMatchFunc: func(data []byte) bool {
+				sessionData := user.SessionState{}
+				if err := json.Unmarshal(data, &sessionData); err != nil {
+					t.Log(err.Error())
+					return false
+				}
+
+				api1Limit := sessionData.AccessRights["api3"].Limit
+				if api1Limit.QuotaRemaining != 5 {
+					t.Error("Should reset quota:", api1Limit.QuotaRemaining)
+					return false
+				}
+
 				return true
 			},
 		},
