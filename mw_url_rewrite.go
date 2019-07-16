@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Sirupsen/logrus"
+
 	"github.com/TykTechnologies/tyk/apidef"
 	"github.com/TykTechnologies/tyk/regexp"
 	"github.com/TykTechnologies/tyk/user"
@@ -91,7 +93,6 @@ func urlRewrite(meta *apidef.URLRewriteMeta, r *http.Request) (string, error) {
 			}
 
 			// Check session meta
-
 			if session := ctxGetSession(r); session != nil {
 				if len(triggerOpts.Options.SessionMetaMatches) > 0 {
 					if checkSessionTrigger(r, session, triggerOpts.Options.SessionMetaMatches, checkAny, tn) {
@@ -100,6 +101,17 @@ func urlRewrite(meta *apidef.URLRewriteMeta, r *http.Request) (string, error) {
 							rewriteToPath = triggerOpts.RewriteTo
 							break
 						}
+					}
+				}
+			}
+
+			// Request context meta
+			if len(triggerOpts.Options.RequestContextMatches) > 0 {
+				if checkContextTrigger(r, triggerOpts.Options.RequestContextMatches, checkAny, tn) {
+					setCount += 1
+					if checkAny {
+						rewriteToPath = triggerOpts.RewriteTo
+						break
 					}
 				}
 			}
@@ -128,6 +140,9 @@ func urlRewrite(meta *apidef.URLRewriteMeta, r *http.Request) (string, error) {
 					total += 1
 				}
 				if len(triggerOpts.Options.SessionMetaMatches) > 0 {
+					total += 1
+				}
+				if len(triggerOpts.Options.RequestContextMatches) > 0 {
 					total += 1
 				}
 				if triggerOpts.Options.PayloadMatches.MatchPattern != "" {
@@ -190,7 +205,7 @@ func replaceTykVariables(r *http.Request, in string, escape bool) string {
 			in = replaceVariables(in, vars, session.MetaData, metaLabel, escape)
 		}
 	}
-
+	//todo add config_data
 	return in
 }
 
@@ -207,6 +222,11 @@ func replaceVariables(in string, vars []string, vals map[string]interface{}, lab
 			in = strings.Replace(in, v, valStr, -1)
 		} else {
 			in = strings.Replace(in, v, "", -1)
+			log.WithFields(logrus.Fields{
+				"key":       key,
+				"value":     v,
+				"in string": in,
+			}).Debug("Replaced with an empty string")
 		}
 	}
 	return in
@@ -277,6 +297,10 @@ func (m *URLRewriteMiddleware) InitTriggerRx() {
 				for key, h := range tr.Options.SessionMetaMatches {
 					h.Init()
 					tr.Options.SessionMetaMatches[key] = h
+				}
+				for key, h := range tr.Options.RequestContextMatches {
+					h.Init()
+					tr.Options.RequestContextMatches[key] = h
 				}
 				for key, h := range tr.Options.PathPartMatches {
 					h.Init()
@@ -454,6 +478,37 @@ func checkSessionTrigger(r *http.Request, sess *user.SessionState, options map[s
 	fCount := 0
 	for mh, mr := range options {
 		rawVal, ok := sess.MetaData[mh]
+		if ok {
+			val, valOk := rawVal.(string)
+			if valOk {
+				match := mr.FindStringSubmatch(val)
+				if len(match) > 0 {
+					addMatchToContextData(contextData, match, triggernum, mh)
+					fCount++
+				}
+			}
+		}
+	}
+
+	if fCount > 0 {
+		ctxSetData(r, contextData)
+		if any {
+			return true
+		}
+
+		return len(options) <= fCount
+	}
+
+	return false
+}
+
+func checkContextTrigger(r *http.Request, options map[string]apidef.StringRegexMap, any bool, triggernum int) bool {
+	contextData := ctxGetData(r)
+	fCount := 0
+
+	for mh, mr := range options {
+		rawVal, ok := contextData[mh]
+
 		if ok {
 			val, valOk := rawVal.(string)
 			if valOk {

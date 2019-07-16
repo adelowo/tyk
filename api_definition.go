@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/rubyist/circuitbreaker"
+	circuit "github.com/rubyist/circuitbreaker"
 
 	"github.com/TykTechnologies/gojsonschema"
 	"github.com/TykTechnologies/tyk/apidef"
@@ -125,7 +125,7 @@ type TransformSpec struct {
 
 type ExtendedCircuitBreakerMeta struct {
 	apidef.CircuitBreakerMeta
-	CB *circuit.Breaker
+	CB *circuit.Breaker `json:"-"`
 }
 
 // APISpec represents a path specification for an API, to avoid enumerating multiple nested lists, a single
@@ -159,7 +159,30 @@ type APISpec struct {
 	GlobalConfig             config.Config
 	OrgHasNoSession          bool
 
-	middlewareChain *ChainObject
+	middlewareChain http.Handler
+
+	shouldRelease bool
+}
+
+// Release re;leases all resources associated with API spec
+func (s *APISpec) Release() {
+	// mark spec as to be released
+	s.shouldRelease = true
+
+	// release circuit breaker resources
+	for _, path := range s.RxPaths {
+		for _, urlSpec := range path {
+			if urlSpec.CircuitBreaker.CB != nil {
+				// this will force CB-event reading routing to exit
+				urlSpec.CircuitBreaker.CB.Reset()
+
+				// TODO: close all circuit breaker's event receivers
+				// which should let event reading Go-routines to exit (need to change circuitbreaker package)
+			}
+		}
+	}
+
+	// release all other resources associated with spec
 }
 
 // APIDefinitionLoader will load an Api definition from a storage
@@ -242,7 +265,6 @@ func (a APIDefinitionLoader) MakeSpec(def *apidef.APIDefinition, logger *logrus.
 		// If we have transitioned to extended path specifications, we should use these now
 		if v.UseExtendedPaths {
 			pathSpecs, whiteListSpecs = a.getExtendedPathSpecs(v, spec)
-
 		} else {
 			logger.Warning("Legacy path detected! Upgrade to extended.")
 			pathSpecs, whiteListSpecs = a.getPathSpecs(v)
@@ -497,16 +519,9 @@ func (a APIDefinitionLoader) compileCachedPathSpec(paths []string) []URLSpec {
 	return urlSpec
 }
 
-var apiTemplate = template.New("").Funcs(map[string]interface{}{
-	"jsonMarshal": func(v interface{}) (string, error) {
-		bs, err := json.Marshal(v)
-		return string(bs), err
-	},
-})
-
 func (a APIDefinitionLoader) loadFileTemplate(path string) (*template.Template, error) {
 	log.Debug("-- Loading template: ", path)
-	return apiTemplate.New("").ParseFiles(path)
+	return apidef.Template.New("").ParseFiles(path)
 }
 
 func (a APIDefinitionLoader) loadBlobTemplate(blob string) (*template.Template, error) {
@@ -515,7 +530,7 @@ func (a APIDefinitionLoader) loadBlobTemplate(blob string) (*template.Template, 
 	if err != nil {
 		return nil, err
 	}
-	return apiTemplate.New("").Parse(string(uDec))
+	return apidef.Template.New("").Parse(string(uDec))
 }
 
 func (a APIDefinitionLoader) compileTransformPathSpec(paths []apidef.TemplateMeta, stat URLStatus) []URLSpec {
@@ -684,6 +699,12 @@ func (a APIDefinitionLoader) compileCircuitBreakerPathSpec(paths []apidef.Circui
 					})
 
 				case circuit.BreakerReset:
+					// check if this spec is set to release resources
+					if spec.shouldRelease {
+						// time to stop this Go-routine
+						return
+					}
+
 					spec.FireEvent(EventBreakerTriggered, EventCurcuitBreakerMeta{
 						EventMetaDefault: EventMetaDefault{Message: "Breaker Reset"},
 						CircuitEvent:     e,

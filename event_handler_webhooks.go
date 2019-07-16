@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Sirupsen/logrus"
 
@@ -37,6 +38,9 @@ type WebHookHandler struct {
 	conf     config.WebHookHandlerConf
 	template *template.Template // non-nil if Init is run without error
 	store    storage.Handler
+
+	contentType      string
+	dashboardService DashboardServiceSender
 }
 
 // createConfigObject by default tyk will provide a map[string]interface{} type as a conf, converting it
@@ -78,6 +82,10 @@ func (w *WebHookHandler) Init(handlerConf interface{}) error {
 				"target": w.conf.TargetPath,
 			}).Warning("Custom template load failure, using default: ", err)
 		}
+
+		if strings.HasSuffix(w.conf.TemplatePath, ".json") {
+			w.contentType = "application/json"
+		}
 	}
 
 	// We use the default if TemplatePath was empty or if we failed
@@ -95,6 +103,7 @@ func (w *WebHookHandler) Init(handlerConf interface{}) error {
 			}).Error("Could not load the default template: ", err)
 			return err
 		}
+		w.contentType = "application/json"
 	}
 
 	log.WithFields(logrus.Fields{
@@ -105,6 +114,11 @@ func (w *WebHookHandler) Init(handlerConf interface{}) error {
 		log.WithFields(logrus.Fields{
 			"prefix": "webhooks",
 		}).Error("Init failed for this webhook, invalid URL, URL must be absolute")
+	}
+
+	if config.Global().UseDBAppConfigs {
+		dashboardServiceInit()
+		w.dashboardService = DashService
 	}
 
 	return nil
@@ -180,6 +194,10 @@ func (w *WebHookHandler) BuildRequest(reqBody string) (*http.Request, error) {
 		req.Header.Set(key, val)
 	}
 
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", w.contentType)
+	}
+
 	return req, nil
 }
 
@@ -209,25 +227,39 @@ func (w *WebHookHandler) HandleEvent(em config.EventMessage) {
 	if w.WasHookFired(reqChecksum) {
 		return
 	}
-	// Fire web hook routine (setHookFired())
 
-	resp, err := http.DefaultClient.Do(req)
+	cli := &http.Client{Timeout: 30 * time.Second}
+
+	resp, err := cli.Do(req)
 	if err != nil {
 		log.WithFields(logrus.Fields{
 			"prefix": "webhooks",
 		}).Error("Webhook request failed: ", err)
 	} else {
 		defer resp.Body.Close()
-		content, err := ioutil.ReadAll(resp.Body)
-		if err == nil {
-			log.WithFields(logrus.Fields{
-				"prefix": "webhooks",
-			}).Debug(string(content))
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			content, err := ioutil.ReadAll(resp.Body)
+			if err == nil {
+				log.WithFields(logrus.Fields{
+					"prefix":       "webhooks",
+					"responseCode": resp.StatusCode,
+				}).Debug(string(content))
+			} else {
+				log.WithFields(logrus.Fields{
+					"prefix": "webhooks",
+				}).Error(err)
+			}
+
 		} else {
 			log.WithFields(logrus.Fields{
-				"prefix": "webhooks",
-			}).Error(err)
+				"prefix":       "webhooks",
+				"responseCode": resp.StatusCode,
+			}).Error("Request to webhook failed")
 		}
+	}
+
+	if w.dashboardService != nil && em.Type == EventTriggerExceeded {
+		w.dashboardService.NotifyDashboardOfEvent(em.Meta)
 	}
 
 	w.setHookFired(reqChecksum)

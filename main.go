@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/newrelic/go-agent"
+	newrelic "github.com/newrelic/go-agent"
 
 	"github.com/TykTechnologies/tyk/checkup"
 
@@ -33,12 +33,12 @@ import (
 	"github.com/justinas/alice"
 	"github.com/lonelycode/gorpc"
 	"github.com/lonelycode/osin"
-	"github.com/netbrain/goautosocket"
 	"github.com/rs/cors"
-	"github.com/satori/go.uuid"
+	uuid "github.com/satori/go.uuid"
 	"rsc.io/letsencrypt"
 
 	"github.com/TykTechnologies/goagain"
+	gas "github.com/TykTechnologies/goautosocket"
 	"github.com/TykTechnologies/tyk/apidef"
 	"github.com/TykTechnologies/tyk/certs"
 	cli "github.com/TykTechnologies/tyk/cli"
@@ -101,6 +101,7 @@ var (
 const (
 	defReadTimeout  = 120 * time.Second
 	defWriteTimeout = 120 * time.Second
+	appName         = "tyk-gateway"
 )
 
 func getApiSpec(apiID string) *APISpec {
@@ -755,12 +756,25 @@ func setupLogger() {
 	if config.Global().UseLogstash {
 		mainLog.Debug("Enabling Logstash support")
 
-		conn, err := gas.Dial(config.Global().LogstashTransport, config.Global().LogstashNetworkAddr)
-		if err != nil {
-			log.Errorf("Error making connection for logstash hook: %v", err)
+		var hook *logstashHook.Hook
+		var err error
+		var conn net.Conn
+		if config.Global().LogstashTransport == "udp" {
+			mainLog.Debug("Connecting to Logstash with udp")
+			hook, err = logstashHook.NewHook(config.Global().LogstashTransport,
+				config.Global().LogstashNetworkAddr,
+				appName)
+		} else {
+			mainLog.Debugf("Connecting to Logstash with %s", config.Global().LogstashTransport)
+			conn, err = gas.Dial(config.Global().LogstashTransport, config.Global().LogstashNetworkAddr)
+			if err == nil {
+				hook, err = logstashHook.NewHookWithConn(conn, appName)
+			}
 		}
-		hook, err := logstashHook.NewHookWithConn(conn, "tyk-gateway")
-		if err == nil {
+
+		if err != nil {
+			log.Errorf("Error making connection for logstash: %v", err)
+		} else {
 			log.Hooks.Add(hook)
 			rawLog.Hooks.Add(hook)
 			mainLog.Debug("Logstash hook active")
@@ -958,6 +972,8 @@ func main() {
 		} else {
 			mainLog.Info("Starting control API listener: ", controlListener, err, controlAPIPort)
 		}
+	} else {
+		mainLog.Warn("The control_api_port should be changed for production")
 	}
 
 	start()

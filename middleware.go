@@ -74,17 +74,22 @@ func createMiddleware(mw TykMiddleware) func(http.Handler) http.Handler {
 			}
 
 			job := instrument.NewJob("MiddlewareCall")
-			meta := health.Kvs{
-				"from_ip":  request.RealIP(r),
-				"method":   r.Method,
-				"endpoint": r.URL.Path,
-				"raw_url":  r.URL.String(),
-				"size":     strconv.Itoa(int(r.ContentLength)),
-				"mw_name":  mw.Name(),
-			}
+			meta := health.Kvs{}
 			eventName := mw.Name() + "." + "executed"
-			job.EventKv("executed", meta)
-			job.EventKv(eventName, meta)
+
+			if instrumentationEnabled {
+				meta = health.Kvs{
+					"from_ip":  request.RealIP(r),
+					"method":   r.Method,
+					"endpoint": r.URL.Path,
+					"raw_url":  r.URL.String(),
+					"size":     strconv.Itoa(int(r.ContentLength)),
+					"mw_name":  mw.Name(),
+				}
+				job.EventKv("executed", meta)
+				job.EventKv(eventName, meta)
+			}
+
 			startTime := time.Now()
 			mw.Logger().WithField("ts", startTime.UnixNano()).Debug("Started")
 
@@ -100,16 +105,23 @@ func createMiddleware(mw TykMiddleware) func(http.Handler) http.Handler {
 				meta["error"] = err.Error()
 
 				finishTime := time.Since(startTime)
-				job.TimingKv("exec_time", finishTime.Nanoseconds(), meta)
-				job.TimingKv(eventName+".exec_time", finishTime.Nanoseconds(), meta)
+
+				if instrumentationEnabled {
+					job.TimingKv("exec_time", finishTime.Nanoseconds(), meta)
+					job.TimingKv(eventName+".exec_time", finishTime.Nanoseconds(), meta)
+				}
 
 				mw.Logger().WithError(err).WithField("code", errCode).WithField("ns", finishTime.Nanoseconds()).Debug("Finished")
 				return
 			}
 
 			finishTime := time.Since(startTime)
-			job.TimingKv("exec_time", finishTime.Nanoseconds(), meta)
-			job.TimingKv(eventName+".exec_time", finishTime.Nanoseconds(), meta)
+
+			if instrumentationEnabled {
+				job.TimingKv("exec_time", finishTime.Nanoseconds(), meta)
+				job.TimingKv(eventName+".exec_time", finishTime.Nanoseconds(), meta)
+			}
+
 			mw.Logger().WithField("code", errCode).WithField("ns", finishTime.Nanoseconds()).Debug("Finished")
 
 			// Special code, bypasses all other execution
@@ -242,6 +254,7 @@ func (t BaseMiddleware) ApplyPolicies(session *user.SessionState) error {
 	if rights == nil {
 		rights = make(map[string]user.AccessDefinition)
 	}
+
 	tags := make(map[string]bool)
 	didQuota, didRateLimit, didACL := false, false, false
 	didPerAPI := make(map[string]bool)
@@ -277,6 +290,11 @@ func (t BaseMiddleware) ApplyPolicies(session *user.SessionState) error {
 				log.Error(err)
 				return err
 			}
+
+			//Added this to ensure that if an API is deleted, it is removed from accessRights also.
+			if len(didPerAPI) == 0 {
+				rights = make(map[string]user.AccessDefinition)
+			}
 			for apiID, accessRights := range policy.AccessRights {
 				// check if limit was already set for this API by other policy assigned to key
 				if didPerAPI[apiID] {
@@ -303,7 +321,7 @@ func (t BaseMiddleware) ApplyPolicies(session *user.SessionState) error {
 				// respect current quota remaining and quota renews (on API limit level)
 				var limitQuotaRemaining int64
 				var limitQuotaRenews int64
-				if currAccessRight, ok := rights[apiID]; ok && currAccessRight.Limit != nil {
+				if currAccessRight, ok := session.AccessRights[apiID]; ok && currAccessRight.Limit != nil {
 					limitQuotaRemaining = currAccessRight.Limit.QuotaRemaining
 					limitQuotaRenews = currAccessRight.Limit.QuotaRenews
 				}
@@ -405,7 +423,6 @@ func (t BaseMiddleware) ApplyPolicies(session *user.SessionState) error {
 
 	// set tags
 	if len(tags) > 0 {
-		session.Tags = make([]string, 0, len(tags))
 		for tag := range tags {
 			session.Tags = append(session.Tags, tag)
 		}

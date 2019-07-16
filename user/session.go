@@ -1,6 +1,8 @@
 package user
 
 import (
+	"time"
+
 	"github.com/TykTechnologies/tyk/config"
 	logger "github.com/TykTechnologies/tyk/log"
 )
@@ -51,6 +53,7 @@ type SessionState struct {
 	Per                float64                     `json:"per" msg:"per"`
 	ThrottleInterval   float64                     `json:"throttle_interval" msg:"throttle_interval"`
 	ThrottleRetryLimit int                         `json:"throttle_retry_limit" msg:"throttle_retry_limit"`
+	DateCreated        time.Time                   `json:"date_created" msg:"date_created"`
 	Expires            int64                       `json:"expires" msg:"expires"`
 	QuotaMax           int64                       `json:"quota_max" msg:"quota_max"`
 	QuotaRenews        int64                       `json:"quota_renews" msg:"quota_renews"`
@@ -134,4 +137,16 @@ func (s *SessionState) PolicyIDs() []string {
 func (s *SessionState) SetPolicies(ids ...string) {
 	s.ApplyPolicyID = ""
 	s.ApplyPolicies = ids
+}
+
+// GetQuotaLimitByAPIID return quota max, quota remaining, quota renewal rate and quota renews for the given session
+func (s *SessionState) GetQuotaLimitByAPIID(apiID string) (int64, int64, int64, int64) {
+	if access, ok := s.AccessRights[apiID]; ok && access.Limit != nil {
+		return access.Limit.QuotaMax,
+			access.Limit.QuotaRemaining,
+			access.Limit.QuotaRenewalRate,
+			access.Limit.QuotaRenews
+	}
+
+	return s.QuotaMax, s.QuotaRemaining, s.QuotaRenewalRate, s.QuotaRenews
 }

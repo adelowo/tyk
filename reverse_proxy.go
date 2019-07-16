@@ -37,6 +37,13 @@ import (
 
 const defaultUserAgent = "Tyk/" + VERSION
 
+// Gateway's custom response headers
+const (
+	XRateLimitLimit     = "X-RateLimit-Limit"
+	XRateLimitRemaining = "X-RateLimit-Remaining"
+	XRateLimitReset     = "X-RateLimit-Reset"
+)
+
 var ServiceCache *cache.Cache
 
 func urlFromService(spec *APISpec) (*apidef.HostList, error) {
@@ -330,6 +337,10 @@ func singleJoiningSlash(a, b string, disableStripSlash bool) string {
 }
 
 func copyHeader(dst, src http.Header) {
+	if val := dst.Get(http.CanonicalHeaderKey("Access-Control-Allow-Origin")); len(val) > 0 {
+		src.Del("Access-Control-Allow-Origin")
+	}
+
 	for k, vv := range src {
 		for _, v := range vv {
 			dst.Add(k, v)
@@ -706,6 +717,17 @@ func (p *ReverseProxy) WrappedServeHTTP(rw http.ResponseWriter, req *http.Reques
 		return nil
 	}
 
+	ses := new(user.SessionState)
+	if session != nil {
+		ses = session
+	}
+
+	// Middleware chain handling here - very simple, but should do
+	// the trick. Chain can be empty, in which case this is a no-op.
+	if err := handleResponseChain(p.TykAPISpec.ResponseChain, rw, res, req, ses); err != nil {
+		log.Error("Response chain failed! ", err)
+	}
+
 	inres := new(http.Response)
 	if withCache {
 		*inres = *res // includes shallow copies of maps, but okay
@@ -722,17 +744,6 @@ func (p *ReverseProxy) WrappedServeHTTP(rw http.ResponseWriter, req *http.Reques
 		// Create new ReadClosers so we can split output
 		res.Body = ioutil.NopCloser(&bodyBuffer)
 		inres.Body = ioutil.NopCloser(bodyBuffer2)
-	}
-
-	ses := new(user.SessionState)
-	if session != nil {
-		ses = session
-	}
-
-	// Middleware chain handling here - very simple, but should do
-	// the trick. Chain can be empty, in which case this is a no-op.
-	if err := handleResponseChain(p.TykAPISpec.ResponseChain, rw, res, req, ses); err != nil {
-		log.Error("Response chain failed! ", err)
 	}
 
 	// We should at least copy the status code in
@@ -767,9 +778,10 @@ func (p *ReverseProxy) HandleResponse(rw http.ResponseWriter, res *http.Response
 	// Add resource headers
 	if ses != nil {
 		// We have found a session, lets report back
-		res.Header.Set("X-RateLimit-Limit", strconv.Itoa(int(ses.QuotaMax)))
-		res.Header.Set("X-RateLimit-Remaining", strconv.Itoa(int(ses.QuotaRemaining)))
-		res.Header.Set("X-RateLimit-Reset", strconv.Itoa(int(ses.QuotaRenews)))
+		quotaMax, quotaRemaining, _, quotaRenews := ses.GetQuotaLimitByAPIID(p.TykAPISpec.APIID)
+		res.Header.Set(XRateLimitLimit, strconv.Itoa(int(quotaMax)))
+		res.Header.Set(XRateLimitRemaining, strconv.Itoa(int(quotaRemaining)))
+		res.Header.Set(XRateLimitReset, strconv.Itoa(int(quotaRenews)))
 	}
 
 	copyHeader(rw.Header(), res.Header)

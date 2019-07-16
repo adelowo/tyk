@@ -107,6 +107,7 @@ func TestMain(m *testing.M) {
 	globalConf.Monitor.EnableTriggerMonitors = true
 	globalConf.AnalyticsConfig.NormaliseUrls.Enabled = true
 
+	globalConf.AllowInsecureConfigs = true
 	// Enable coprocess and bundle downloader:
 	globalConf.CoProcessOptions.EnableCoProcess = true
 	globalConf.EnableBundleDownloader = true
@@ -143,6 +144,7 @@ func TestMain(m *testing.M) {
 		panic("GeoIPDB was not initialized")
 	}
 
+	go startPubSubLoop()
 	go reloadLoop(reloadTick)
 	go reloadQueueLoop()
 	go reloadSimulation()
@@ -277,6 +279,37 @@ func TestParambasedAuth(t *testing.T) {
 		Data:      string(form.Encode()),
 		Code:      200,
 		BodyMatch: expectedBody,
+	})
+}
+
+func TestStripPathWithURLRewrite(t *testing.T) {
+	ts := newTykTestServer()
+	defer ts.Close()
+	defer resetTestConfig()
+
+	t.Run("rewrite URL containing listen path", func(t *testing.T) {
+		buildAndLoadAPI(func(spec *APISpec) {
+			version := spec.VersionData.Versions["v1"]
+			json.Unmarshal([]byte(`{
+                "use_extended_paths": true,
+                "extended_paths": {
+                        "url_rewrites": [{
+                                "path": "/anything/",
+                                "match_pattern": "/anything/(.*)",
+                                "method": "GET",
+				"rewrite_to":"/something/$1"
+                        }]
+                }
+            }`), &version)
+			spec.VersionData.Versions["v1"] = version
+			spec.Proxy.ListenPath = "/myapi/"
+			spec.Proxy.StripListenPath = true
+
+		})
+
+		ts.Run(t, []test.TestCase{
+			{Path: "/myapi/anything/a/myapi/b/c", BodyMatch: `"Url":"/something/a/myapi/b/c"`},
+		}...)
 	})
 }
 
@@ -879,21 +912,62 @@ func TestReloadGoroutineLeakWithAsyncWrites(t *testing.T) {
 
 	globalConf := config.Global()
 	globalConf.UseAsyncSessionWrite = true
+	globalConf.EnableJSVM = false
 	config.SetGlobal(globalConf)
 	defer resetTestConfig()
 
-	buildAndLoadAPI(func(spec *APISpec) {
+	specs := buildAndLoadAPI(func(spec *APISpec) {
 		spec.Proxy.ListenPath = "/"
 	})
 
 	before := runtime.NumGoroutine()
-	doReload()
+
+	loadAPI(specs...) // just doing doReload() doesn't load anything as buildAndLoadAPI cleans up folder with API specs
 
 	time.Sleep(100 * time.Millisecond)
 
 	after := runtime.NumGoroutine()
 
-	if after-before > 10 {
+	if before < after {
+		t.Errorf("Goroutine leak, was: %d, after reload: %d", before, after)
+	}
+}
+
+func TestReloadGoroutineLeakWithCircuitBreaker(t *testing.T) {
+	ts := newTykTestServer()
+	defer ts.Close()
+
+	globalConf := config.Global()
+	globalConf.EnableJSVM = false
+	config.SetGlobal(globalConf)
+	defer resetTestConfig()
+
+	specs := buildAndLoadAPI(func(spec *APISpec) {
+		spec.Proxy.ListenPath = "/"
+		updateAPIVersion(spec, "v1", func(version *apidef.VersionInfo) {
+			version.ExtendedPaths = apidef.ExtendedPathsSet{
+				CircuitBreaker: []apidef.CircuitBreakerMeta{
+					{
+						Path:                 "/",
+						Method:               http.MethodGet,
+						ThresholdPercent:     0.5,
+						Samples:              5,
+						ReturnToServiceAfter: 10,
+					},
+				},
+			}
+		})
+	})
+
+	before := runtime.NumGoroutine()
+
+	loadAPI(specs...) // just doing doReload() doesn't load anything as buildAndLoadAPI cleans up folder with API specs
+
+	time.Sleep(100 * time.Millisecond)
+
+	after := runtime.NumGoroutine()
+
+	if before < after-1 { // -1 because there is one will be running until we fix circuitbreaker Subscribe() method
 		t.Errorf("Goroutine leak, was: %d, after reload: %d", before, after)
 	}
 }
@@ -1083,31 +1157,6 @@ func TestCacheEtag(t *testing.T) {
 	}...)
 }
 
-func TestWebsocketsUpstreamUpgradeRequest(t *testing.T) {
-	// setup spec and do test HTTP upgrade-request
-	globalConf := config.Global()
-	globalConf.HttpServerOptions.EnableWebSockets = true
-	config.SetGlobal(globalConf)
-	defer resetTestConfig()
-
-	ts := newTykTestServer()
-	defer ts.Close()
-
-	buildAndLoadAPI(func(spec *APISpec) {
-		spec.Proxy.ListenPath = "/"
-	})
-
-	ts.Run(t, test.TestCase{
-		Path: "/ws",
-		Headers: map[string]string{
-			"Connection":            "Upgrade",
-			"Upgrade":               "websocket",
-			"Sec-Websocket-Version": "13",
-			"Sec-Websocket-Key":     "abc",
-		},
-		Code: http.StatusSwitchingProtocols,
-	})
-}
 
 func TestWebsocketsSeveralOpenClose(t *testing.T) {
 	globalConf := config.Global()

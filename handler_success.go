@@ -4,18 +4,17 @@ import (
 	"bytes"
 	"encoding/base64"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"runtime/pprof"
 	"strconv"
 	"strings"
 	"time"
 
-	cache "github.com/pmylund/go-cache"
-
-	"github.com/TykTechnologies/tyk/request"
-
 	"github.com/TykTechnologies/tyk/config"
+	"github.com/TykTechnologies/tyk/request"
 	"github.com/TykTechnologies/tyk/user"
+	cache "github.com/pmylund/go-cache"
 )
 
 // Enums for keys to be stored in a session context - this is how gorilla expects
@@ -195,9 +194,17 @@ func (s *SuccessHandler) RecordHit(r *http.Request, timing int64, code int, resp
 			// mw_redis_cache instead? is there a reason not
 			// to include that in the analytics?
 			if responseCopy != nil {
+				contents, err := ioutil.ReadAll(responseCopy.Body)
+				if err != nil {
+					log.Error("Couldn't read response body", err)
+				}
+
+				responseCopy.Body = respBodyReader(r, responseCopy)
+
 				// Get the wire format representation
 				var wireFormatRes bytes.Buffer
 				responseCopy.Write(&wireFormatRes)
+				responseCopy.Body = ioutil.NopCloser(bytes.NewBuffer(contents))
 				rawResponse = base64.StdEncoding.EncodeToString(wireFormatRes.Bytes())
 			}
 		}
@@ -209,8 +216,14 @@ func (s *SuccessHandler) RecordHit(r *http.Request, timing int64, code int, resp
 			trackedPath = p
 		}
 
+		host := r.URL.Host
+		if host == "" && s.Spec.target != nil {
+			host = s.Spec.target.Host
+		}
+
 		record := AnalyticsRecord{
 			r.Method,
+			host,
 			trackedPath,
 			r.URL.Path,
 			r.ContentLength,
@@ -305,8 +318,8 @@ func (s *SuccessHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) *http
 	// Make sure we get the correct target URL
 	if s.Spec.Proxy.StripListenPath {
 		log.Debug("Stripping: ", s.Spec.Proxy.ListenPath)
-		r.URL.Path = strings.Replace(r.URL.Path, s.Spec.Proxy.ListenPath, "", 1)
-		r.URL.RawPath = strings.Replace(r.URL.RawPath, s.Spec.Proxy.ListenPath, "", 1)
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, s.Spec.Proxy.ListenPath)
+		r.URL.RawPath = strings.TrimPrefix(r.URL.RawPath, s.Spec.Proxy.ListenPath)
 		log.Debug("Upstream Path is: ", r.URL.Path)
 	}
 
@@ -343,8 +356,8 @@ func (s *SuccessHandler) ServeHTTPWithCache(w http.ResponseWriter, r *http.Reque
 
 	// Make sure we get the correct target URL
 	if s.Spec.Proxy.StripListenPath {
-		r.URL.Path = strings.Replace(r.URL.Path, s.Spec.Proxy.ListenPath, "", 1)
-		r.URL.RawPath = strings.Replace(r.URL.RawPath, s.Spec.Proxy.ListenPath, "", 1)
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, s.Spec.Proxy.ListenPath)
+		r.URL.RawPath = strings.TrimPrefix(r.URL.RawPath, s.Spec.Proxy.ListenPath)
 	}
 
 	t1 := time.Now()

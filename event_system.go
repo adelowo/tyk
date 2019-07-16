@@ -75,9 +75,10 @@ type EventVersionFailureMeta struct {
 
 type EventTriggerExceededMeta struct {
 	EventMetaDefault
-	Org          string
-	Key          string
-	TriggerLimit int64
+	OrgID           string `json:"org_id"`
+	Key             string `json:"key"`
+	TriggerLimit    int64  `json:"trigger_limit"`
+	UsagePercentage int64  `json:"usage_percentage"`
 }
 
 type EventTokenMeta struct {
@@ -154,7 +155,7 @@ func (s *APISpec) FireEvent(name apidef.TykEvent, meta interface{}) {
 }
 
 func FireSystemEvent(name apidef.TykEvent, meta interface{}) {
-	fireEvent(name, meta, config.Global().EventTriggers)
+	fireEvent(name, meta, config.Global().GetEventTriggers())
 }
 
 // LogMessageEventHandler is a sample Event Handler
@@ -212,5 +213,5 @@ func initGenericEventHandlers(conf *config.Config) {
 
 		}
 	}
-	conf.EventTriggers = handlers
+	conf.SetEventTriggers(handlers)
 }

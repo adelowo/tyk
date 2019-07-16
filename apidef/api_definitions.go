@@ -3,6 +3,10 @@ package apidef
 import (
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
+	"text/template"
+
+	"github.com/clbanning/mxj"
 
 	"github.com/lonelycode/osin"
 	"gopkg.in/mgo.v2/bson"
@@ -144,11 +148,12 @@ type StringRegexMap struct {
 }
 
 type RoutingTriggerOptions struct {
-	HeaderMatches      map[string]StringRegexMap `bson:"header_matches" json:"header_matches"`
-	QueryValMatches    map[string]StringRegexMap `bson:"query_val_matches" json:"query_val_matches"`
-	PathPartMatches    map[string]StringRegexMap `bson:"path_part_matches" json:"path_part_matches"`
-	SessionMetaMatches map[string]StringRegexMap `bson:"session_meta_matches" json:"session_meta_matches"`
-	PayloadMatches     StringRegexMap            `bson:"payload_matches" json:"payload_matches"`
+	HeaderMatches         map[string]StringRegexMap `bson:"header_matches" json:"header_matches"`
+	QueryValMatches       map[string]StringRegexMap `bson:"query_val_matches" json:"query_val_matches"`
+	PathPartMatches       map[string]StringRegexMap `bson:"path_part_matches" json:"path_part_matches"`
+	SessionMetaMatches    map[string]StringRegexMap `bson:"session_meta_matches" json:"session_meta_matches"`
+	RequestContextMatches map[string]StringRegexMap `bson:"request_context_matches" json:"request_context_matches"`
+	PayloadMatches        StringRegexMap            `bson:"payload_matches" json:"payload_matches"`
 }
 
 type RoutingTrigger struct {
@@ -357,6 +362,7 @@ type APIDefinition struct {
 	JWTIdentityBaseField       string               `bson:"jwt_identit_base_field" json:"jwt_identity_base_field"`
 	JWTClientIDBaseField       string               `bson:"jwt_client_base_field" json:"jwt_client_base_field"`
 	JWTPolicyFieldName         string               `bson:"jwt_policy_field_name" json:"jwt_policy_field_name"`
+	JWTDefaultPolicies         []string             `bson:"jwt_default_policies" json:"jwt_default_policies"`
 	JWTIssuedAtValidationSkew  uint64               `bson:"jwt_issued_at_validation_skew" json:"jwt_issued_at_validation_skew"`
 	JWTExpiresAtValidationSkew uint64               `bson:"jwt_expires_at_validation_skew" json:"jwt_expires_at_validation_skew"`
 	JWTNotBeforeValidationSkew uint64               `bson:"jwt_not_before_validation_skew" json:"jwt_not_before_validation_skew"`
@@ -690,16 +696,16 @@ func DummyAPI() APIDefinition {
 	}
 
 	return APIDefinition{
-		VersionData:             versionData,
-		ConfigData:              map[string]interface{}{},
-		AllowedIPs:              []string{},
-		PinnedPublicKeys:        map[string]string{},
-		ResponseProcessors:      []ResponseProcessor{},
-		ClientCertificates:      []string{},
-		BlacklistedIPs:          []string{},
-		TagHeaders:              []string{},
-		UpstreamCertificates:    map[string]string{},
-		HmacAllowedAlgorithms:   []string{},
+		VersionData:           versionData,
+		ConfigData:            map[string]interface{}{},
+		AllowedIPs:            []string{},
+		PinnedPublicKeys:      map[string]string{},
+		ResponseProcessors:    []ResponseProcessor{},
+		ClientCertificates:    []string{},
+		BlacklistedIPs:        []string{},
+		TagHeaders:            []string{},
+		UpstreamCertificates:  map[string]string{},
+		HmacAllowedAlgorithms: []string{},
 		CustomMiddleware: MiddlewareSection{
 			Post:        []MiddlewareDefinition{},
 			Pre:         []MiddlewareDefinition{},
@@ -712,3 +718,29 @@ func DummyAPI() APIDefinition {
 		Tags: []string{},
 	}
 }
+
+var Template = template.New("").Funcs(map[string]interface{}{
+	"jsonMarshal": func(v interface{}) (string, error) {
+		bs, err := json.Marshal(v)
+		return string(bs), err
+	},
+	"xmlMarshal": func(v interface{}) (string, error) {
+		var err error
+		var xmlValue []byte
+		mv, ok := v.(mxj.Map)
+		if ok {
+			mxj.XMLEscapeChars(true)
+			xmlValue, err = mv.Xml()
+		} else {
+			res, ok := v.(map[string]interface{})
+			if ok {
+				mxj.XMLEscapeChars(true)
+				xmlValue, err = mxj.Map(res).Xml()
+			} else {
+				xmlValue, err = xml.MarshalIndent(v, "", "  ")
+			}
+		}
+
+		return string(xmlValue), err
+	},
+})
